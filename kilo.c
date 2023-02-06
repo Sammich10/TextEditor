@@ -1,3 +1,5 @@
+//continue from step 59
+
 /*** includes ***/
 #include <string.h>
 #include <ctype.h>
@@ -28,10 +30,17 @@ enum editorKey{//integer identifiers to common escape sequence keypresses
 
 /*** data ***/
 
+typedef struct erow { //store a line of text as a pointer to the dynamically allocated character data and length
+	int size;
+	char *chars;
+} erow;
+
 struct editorConfig{
 	int screenrows;	//rows of terminal
 	int screencols; //columns of terminal
 	int cx,cy; //cursor position
+	int numrows; //number of rows
+	erow row; //data structure to storea line of text
 	struct termios orig_termios;//original terminal i/o configuration structure
 };
 
@@ -106,8 +115,8 @@ int editorReadKey(){//function for low level keypress reading. reads a keypress 
 			}
 		}
 		return '\x1b';
-	}else{
-	return c;
+	} else{
+	  return c;
 	}
 }
 
@@ -140,6 +149,28 @@ int getWindowSize(int *rows, int *cols){
 		*rows = ws.ws_row;
 		return 0;
 	}
+}
+
+/*** file i/o ***/
+
+void editorOpen(char *filename) {
+	FILE *fp = fopen(filename, "r");
+	if(!fp) die("fopen");
+
+	char *line = NULL;
+	size_t linecap = 0;
+	ssize_t linelen;
+	linelen = getline(&line, &linecap, fp);
+	if(linelen != -1){
+		while(linelen > 0 && (line[linelen-1] == '\n' || line[linelen - 1] == '\r')) linelen--;
+		E.row.size = linelen;
+		E.row.chars = malloc(linelen + 1);
+		memcopy(E.row.chars, line, linelen);
+		E.row.chars[linelen] = '\0';
+		E.numrows = 1;
+	}
+	free(line);
+	fclose(fp)
 }
 
 /*** append buffer ***/
@@ -222,23 +253,29 @@ void editorProcessKeypress(){//function to map keypresses to editor operations
 
 /*** output ***/
 
-void editorDrawRows(struct abuf *ab){//draw ~ on the left on each row like in vim
+void editorDrawRows(struct abuf *ab){//draw the rows in the editor program
 	int y; 
 	for (y=0;y<E.screenrows;y++){
-		if(y==E.screenrows/3){
-			char welcome[80];
-			int welcomelen = snprintf(welcome, sizeof(welcome),
-				"Kilo editor -- version %s", KILO_VERSION);//display welcome message
-			if(welcomelen > E.screencols) welcomelen = E.screencols;
-			int padding = (E.screencols - welcomelen)/2;//center the 'welcomne' message
-			if(padding){
-				abAppend(ab,"~",1);
-				padding--;
+		if(y>= E.numrows){//check if we are currently drawing a row that is part of the text buffer, or a row that comes after the end of the text buffer
+			if(y==E.screenrows/3){
+				char welcome[80];
+				int welcomelen = snprintf(welcome, sizeof(welcome),
+					"Kilo editor -- version %s", KILO_VERSION);//display welcome message
+				if(welcomelen > E.screencols) welcomelen = E.screencols;
+				int padding = (E.screencols - welcomelen)/2;//center the 'welcomne' message
+				if(padding){
+					abAppend(ab,"~",1);
+					padding--;
+				}
+				while(padding--) abAppend(ab, " ", 1);//add spaces before message to 'center' it
+				abAppend(ab, welcome, welcomelen);
+			}else{
+			abAppend(ab, "~", 1);//draw ~ on the left for each row like in vim
 			}
-			while(padding--) abAppend(ab, " ", 1);//add spaces before message to 'center' it
-			abAppend(ab, welcome, welcomelen);
 		}else{
-		abAppend(ab, "~", 1);
+			int len = E.row.size;
+			if(len > E.screencols) len = E.screencols;
+			abAppend(ab, E.row.chars, len);
 		}
 
 		abAppend(ab, "\x1b[K",3);
@@ -270,14 +307,20 @@ void editorRefreshScreen(){//refresh the screen
 /*** init ***/
 
 void initEditor(){//initialize the editor
-	E.cx=0;
+	E.cx=0;// initialize cursor position
 	E.cy=0;
+	E.numrows = 0;// initialize the number of rows
+
 	if(getWindowSize(&E.screenrows, &E.screencols) == -1) die("getWindowSize");
 }
 
 int main(){//main function 
 	enableRawMode();
 	initEditor();
+  if(argc >= 2){
+					editorOpen(argv[1]);
+	}
+
 	while(1){
 		editorRefreshScreen();
 		editorProcessKeypress();
